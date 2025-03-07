@@ -81,7 +81,7 @@ func NewActionModal() *ActionModal {
 func (m *ActionModal) announceToScreenReader(announcement string) {
 	if m.accessibilityEnabled {
 		// This prints directly to stderr which screen readers typically monitor
-		fmt.Fprintf(os.Stderr, "\n[SCREEN_READER_ANNOUNCEMENT] %s\n", announcement)
+		fmt.Fprintf(os.Stderr, "[SCREEN_READER_ANNOUNCEMENT] %s", announcement)
 	}
 }
 
@@ -152,7 +152,6 @@ func (m *ActionModal) AddButtons(labels []string) *ActionModal {
 				switch event.Key() {
 				case tcell.KeyDown, tcell.KeyRight:
 					// After the event is processed, the next button will have focus
-					// We'll announce this in the button's Draw method later
 					return tcell.NewEventKey(tcell.KeyTab, 0, tcell.ModNone)
 				case tcell.KeyUp, tcell.KeyLeft:
 					return tcell.NewEventKey(tcell.KeyBacktab, 0, tcell.ModNone)
@@ -177,32 +176,6 @@ func (m *ActionModal) AddButtons(labels []string) *ActionModal {
 				}
 				return event
 			})
-
-			// Store original DrawFunc
-			originalDrawHandler := button.GetDrawFunc()
-
-			// Override Draw function to announce focus changes
-			button.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
-				if m.accessibilityEnabled && button.HasFocus() {
-					buttonIndex := -1
-					for j := 0; j < m.form.GetButtonCount(); j++ {
-						if m.form.GetButton(j) == button {
-							buttonIndex = j
-							break
-						}
-					}
-
-					if buttonIndex >= 0 {
-						// Only announce if we haven't recently announced this button
-						// This is a basic way to avoid too many announcements
-						// A more robust solution would use a timestamp or state tracking
-						m.announceToScreenReader(fmt.Sprintf("Button focus: %s", button.GetLabel()))
-					}
-				}
-
-				// Call the original Draw function
-				return originalDrawHandler(screen, x, y, width, height)
-			})
 		}(index, label)
 	}
 	return m
@@ -217,6 +190,12 @@ func (m *ActionModal) ClearButtons() *ActionModal {
 // SetFocus shifts the focus to the button with the given index.
 func (m *ActionModal) SetFocus(index int) *ActionModal {
 	m.form.SetFocus(index)
+	if m.accessibilityEnabled && index >= 0 && index < m.form.GetButtonCount() {
+		button := m.form.GetButton(index)
+		if button != nil {
+			m.announceToScreenReader(fmt.Sprintf("Button focus: %s", button.GetLabel()))
+		}
+	}
 	return m
 }
 

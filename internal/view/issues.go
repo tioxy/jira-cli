@@ -51,6 +51,13 @@ func (l *IssueList) Render() error {
 	if l.FooterText == "" {
 		l.FooterText = fmt.Sprintf("Showing %d of %d results for project %q", len(data)-1, l.Total, l.Project)
 	}
+	
+	// Check for environment variable to handle accessibility mode
+	_, accessibilityEnabled := os.LookupEnv("JIRA_ACCESSIBILITY_MODE")
+	if accessibilityEnabled {
+		// We'll handle the footer announcement through the table, not as raw output
+		fmt.Printf("Loading issues for project %q\n", l.Project)
+	}
 
 	view := tui.NewTable(
 		tui.WithTableStyle(l.Display.TableStyle),

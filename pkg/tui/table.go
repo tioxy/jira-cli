@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -228,6 +229,26 @@ func (t *Table) Paint(data TableData) error {
 	}
 	t.data = data
 	t.render(data)
+	
+	// Schedule an announcement for the initial selection
+	if t.screen.accessibilityEnabled && len(data) > 1 {
+		// Store reference to data for the goroutine
+		dataCopy := data
+		
+		// Run in a goroutine with a short delay to ensure the UI is ready
+		go func() {
+			// Give the UI a moment to set the initial selection
+			time.Sleep(100 * time.Millisecond)
+			
+			if len(dataCopy) > 1 && len(dataCopy[1]) > 0 {
+				// Show the footer text first (total count info)
+				if t.footerText != "" {
+					t.screen.AnnounceToScreenReader(t.footerText)
+				}
+			}
+		}()
+	}
+	
 	return t.screen.Paint(t.painter)
 }
 
@@ -245,24 +266,32 @@ func (t *Table) render(data TableData) {
 		if r > 0 && r < len(data) && c >= 0 && c < len(data[0]) {
 			// Get row data for announcement
 			rowData := data[r]
-			headerData := data[0]
-
+			
 			// Create announcement with current selection information
-			var announcement string
 			if len(rowData) > 0 {
-				// Include key identifier and header name for context
-				keyCol := 0 // Assume first column is the ID/key column
+				// Get key/ID and format for screen reader
+				keyCol := 0 // First column is usually ID/key
+				statusCol := data.GetIndex("STATUS")
+				summaryCol := data.GetIndex("SUMMARY")
+				
+				var announcement string
+				
+				// Build a cleaner announcement with just the important fields
 				if keyCol < len(rowData) {
-					announcement = fmt.Sprintf("Selected: %s", rowData[keyCol])
-					// Add header and value of current cell if different from key column
-					if c != keyCol && c < len(headerData) && c < len(rowData) {
-						announcement += fmt.Sprintf(", %s: %s", headerData[c], rowData[c])
+					// Start with position info showing current and total
+					announcement = fmt.Sprintf("%d of %d: %s", r, len(data)-1, rowData[keyCol])
+					
+					// Add status if available
+					if statusCol >= 0 && statusCol < len(rowData) {
+						announcement += fmt.Sprintf(", %s", rowData[statusCol])
+					}
+					
+					// Add summary if available
+					if summaryCol >= 0 && summaryCol < len(rowData) {
+						announcement += fmt.Sprintf(", %s", rowData[summaryCol])
 					}
 				}
-			}
-
-			// Announce selection to screen reader
-			if announcement != "" {
+				
 				t.screen.AnnounceToScreenReader(announcement)
 			}
 		}
