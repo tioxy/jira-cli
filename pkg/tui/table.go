@@ -239,6 +239,34 @@ func (t *Table) render(data TableData) {
 	}
 	renderTableHeader(t, data[0])
 	renderTableCell(t, data)
+
+	// Add selection changed handler to announce current selection to screen readers
+	t.view.SetSelectionChangedFunc(func(r, c int) {
+		if r > 0 && r < len(data) && c >= 0 && c < len(data[0]) {
+			// Get row data for announcement
+			rowData := data[r]
+			headerData := data[0]
+
+			// Create announcement with current selection information
+			var announcement string
+			if len(rowData) > 0 {
+				// Include key identifier and header name for context
+				keyCol := 0 // Assume first column is the ID/key column
+				if keyCol < len(rowData) {
+					announcement = fmt.Sprintf("Selected: %s", rowData[keyCol])
+					// Add header and value of current cell if different from key column
+					if c != keyCol && c < len(headerData) && c < len(rowData) {
+						announcement += fmt.Sprintf(", %s: %s", headerData[c], rowData[c])
+					}
+				}
+			}
+
+			// Announce selection to screen reader
+			if announcement != "" {
+				t.screen.AnnounceToScreenReader(announcement)
+			}
+		}
+	})
 }
 
 func (t *Table) initFooter() {
@@ -286,6 +314,33 @@ func (t *Table) initTable() {
 				r, c := t.view.GetSelection()
 				t.copyKeyFunc(r, c, t.data)
 			}
+
+			// Accessibility features - announce current cell content
+			if ev.Key() == tcell.KeyCtrlS && t.screen.accessibilityEnabled {
+				r, c := t.view.GetSelection()
+				if r >= 0 && r < len(t.data) && c >= 0 && c < len(t.data[0]) {
+					// Get cell data and header for announcement
+					cellData := t.data.Get(r, c)
+					headerText := ""
+					if len(t.data) > 0 && c < len(t.data[0]) {
+						headerText = t.data[0][c]
+					}
+
+					// Create detailed announcement with cell position
+					announcement := fmt.Sprintf("Row %d, Column %d (%s): %s", r, c, headerText, cellData)
+					t.screen.AnnounceToScreenReader(announcement)
+				}
+				return nil // Consume event
+			}
+
+			// Accessibility help
+			if ev.Key() == tcell.KeyCtrlA && t.screen.accessibilityEnabled {
+				accessibilityHelp := "Accessibility shortcuts: Control+S to speak current cell, " +
+					"Control+A for this help, Arrow keys to navigate, Tab to move between sections."
+				t.screen.AnnounceToScreenReader(accessibilityHelp)
+				return nil // Consume event
+			}
+
 			if ev.Key() == tcell.KeyRune {
 				switch ev.Rune() {
 				case 'q':
@@ -293,17 +348,34 @@ func (t *Table) initTable() {
 					os.Exit(0)
 				case '?':
 					t.painter.ShowPage("help")
+					// Announce help visibility for screen readers
+					if t.screen.accessibilityEnabled {
+						t.screen.AnnounceToScreenReader("Help screen opened. Press q or Escape to close.")
+					}
 				case 'c':
 					if t.copyFunc == nil {
 						break
 					}
 					r, c := t.view.GetSelection()
 					t.copyFunc(r, c, t.data)
+					// Announce copy action for screen readers
+					if t.screen.accessibilityEnabled {
+						t.screen.AnnounceToScreenReader("Copied to clipboard")
+					}
 				case 'v':
 					if t.viewModeFunc == nil {
 						break
 					}
 					r, c := t.view.GetSelection()
+
+					// Announce view action for screen readers
+					if t.screen.accessibilityEnabled {
+						var itemDesc string
+						if r >= 0 && r < len(t.data) && len(t.data[r]) > 0 {
+							itemDesc = t.data.Get(r, 0) // Usually first column has ID
+						}
+						t.screen.AnnounceToScreenReader(fmt.Sprintf("Viewing details for %s", itemDesc))
+					}
 
 					go func() {
 						func() {
@@ -327,7 +399,13 @@ func (t *Table) initTable() {
 					}
 
 					refreshContextInFooter := func() {
-						t.action.GetFooter().SetText("Use TAB or ← → to navigate, ENTER to select, ESC or q to cancel.").SetTextColor(tcell.ColorGray)
+						footerText := "Use TAB or ← → to navigate, ENTER to select, ESC or q to cancel."
+						t.action.GetFooter().SetText(footerText).SetTextColor(tcell.ColorGray)
+
+						// Announce navigation instructions for screen readers
+						if t.screen.accessibilityEnabled {
+							t.screen.AnnounceToScreenReader(footerText)
+						}
 					}
 
 					go func() {
@@ -342,6 +420,13 @@ func (t *Table) initTable() {
 							r, c := t.view.GetSelection()
 							key, actions, handler, currentStatus, refreshFunc := t.moveFunc(r, c)()
 
+							// Announce move action for screen readers
+							if t.screen.accessibilityEnabled {
+								actionsStr := strings.Join(actions, ", ")
+								t.screen.AnnounceToScreenReader(
+									fmt.Sprintf("Transition menu for %s. Available options: %s", key, actionsStr))
+							}
+
 							currentStatusIdx := func() int {
 								for i, btn := range actions {
 									if btn == currentStatus {
@@ -352,23 +437,39 @@ func (t *Table) initTable() {
 							}
 
 							t.action.ClearButtons().AddButtons(actions).SetFocus(currentStatusIdx())
-							t.action.SetText(
-								fmt.Sprintf("Select desired state to transition %s to:", key),
-							)
+							actionText := fmt.Sprintf("Select desired state to transition %s to:", key)
+							t.action.SetText(actionText)
 
 							t.action.SetDoneFunc(func(btnIndex int, btnLabel string) {
-								t.action.GetFooter().SetText("Processing. Please wait...").SetTextColor(tcell.ColorGray)
+								processingMsg := "Processing. Please wait..."
+								t.action.GetFooter().SetText(processingMsg).SetTextColor(tcell.ColorGray)
+
+								// Announce processing for screen readers
+								if t.screen.accessibilityEnabled {
+									t.screen.AnnounceToScreenReader(processingMsg)
+								}
+
 								t.screen.ForceDraw()
 
 								err := handler(btnLabel)
 								if err != nil {
-									t.action.GetFooter().SetText(
-										fmt.Sprintf("Error: %s", err.Error()),
-									).SetTextColor(tcell.ColorRed)
+									errorMsg := fmt.Sprintf("Error: %s", err.Error())
+									t.action.GetFooter().SetText(errorMsg).SetTextColor(tcell.ColorRed)
+
+									// Announce error for screen readers
+									if t.screen.accessibilityEnabled {
+										t.screen.AnnounceToScreenReader(errorMsg)
+									}
 									return
 								}
 								t.painter.HidePage("action")
 								refreshContextInFooter()
+
+								// Announce success for screen readers
+								if t.screen.accessibilityEnabled {
+									t.screen.AnnounceToScreenReader(
+										fmt.Sprintf("Successfully transitioned %s to %s", key, btnLabel))
+								}
 
 								if refreshFunc != nil {
 									refreshFunc(r, c, btnLabel)

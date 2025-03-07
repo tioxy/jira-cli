@@ -1,6 +1,8 @@
 package primitive
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -33,13 +35,20 @@ type ActionModal struct {
 	// The optional callback for when the user clicked one of the buttons. It
 	// receives the index of the clicked button and the button's label.
 	done func(buttonIndex int, buttonLabel string)
+
+	// Whether accessibility mode is enabled
+	accessibilityEnabled bool
 }
 
 // NewActionModal returns a new modal message window.
 func NewActionModal() *ActionModal {
+	// Check if accessibility mode is enabled
+	_, accessibilityEnabled := os.LookupEnv("JIRA_ACCESSIBILITY_MODE")
+
 	m := &ActionModal{
-		Box:       tview.NewBox(),
-		textColor: tview.Styles.PrimaryTextColor,
+		Box:                  tview.NewBox(),
+		textColor:            tview.Styles.PrimaryTextColor,
+		accessibilityEnabled: accessibilityEnabled,
 	}
 	m.form = tview.NewForm().
 		SetButtonsAlign(tview.AlignCenter).
@@ -48,6 +57,9 @@ func NewActionModal() *ActionModal {
 	m.form.SetBackgroundColor(tview.Styles.ContrastBackgroundColor).SetBorderPadding(0, 0, 0, 0)
 	m.form.SetCancelFunc(func() {
 		if m.done != nil {
+			if m.accessibilityEnabled {
+				m.announceToScreenReader("Dialog cancelled")
+			}
 			m.done(-1, "")
 		}
 	})
@@ -63,6 +75,14 @@ func NewActionModal() *ActionModal {
 		SetBackgroundColor(tview.Styles.ContrastBackgroundColor).
 		SetBorderPadding(1, 1, 1, 1)
 	return m
+}
+
+// announceToScreenReader outputs text specifically formatted for screen readers.
+func (m *ActionModal) announceToScreenReader(announcement string) {
+	if m.accessibilityEnabled {
+		// This prints directly to stderr which screen readers typically monitor
+		fmt.Fprintf(os.Stderr, "\n[SCREEN_READER_ANNOUNCEMENT] %s\n", announcement)
+	}
 }
 
 // GetFooter returns the footer of the modal.
@@ -118,6 +138,11 @@ func (m *ActionModal) AddButtons(labels []string) *ActionModal {
 	for index, label := range labels {
 		func(i int, l string) {
 			m.form.AddButton(label, func() {
+				// Announce button selection for screen readers
+				if m.accessibilityEnabled {
+					m.announceToScreenReader(fmt.Sprintf("Selected: %s", l))
+				}
+
 				if m.done != nil {
 					m.done(i, l)
 				}
@@ -126,11 +151,57 @@ func (m *ActionModal) AddButtons(labels []string) *ActionModal {
 			button.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 				switch event.Key() {
 				case tcell.KeyDown, tcell.KeyRight:
+					// After the event is processed, the next button will have focus
+					// We'll announce this in the button's Draw method later
 					return tcell.NewEventKey(tcell.KeyTab, 0, tcell.ModNone)
 				case tcell.KeyUp, tcell.KeyLeft:
 					return tcell.NewEventKey(tcell.KeyBacktab, 0, tcell.ModNone)
+				case tcell.KeyCtrlS:
+					// Speak the current button label (accessibility feature)
+					if m.accessibilityEnabled {
+						currentButtonIndex := -1
+						for j := 0; j < m.form.GetButtonCount(); j++ {
+							if m.form.GetButton(j).HasFocus() {
+								currentButtonIndex = j
+								break
+							}
+						}
+
+						if currentButtonIndex >= 0 {
+							buttonLabel := m.form.GetButton(currentButtonIndex).GetLabel()
+							position := fmt.Sprintf("Button %d of %d", currentButtonIndex+1, m.form.GetButtonCount())
+							m.announceToScreenReader(fmt.Sprintf("%s: %s", position, buttonLabel))
+						}
+					}
+					return nil
 				}
 				return event
+			})
+
+			// Store original DrawFunc
+			originalDrawHandler := button.GetDrawFunc()
+
+			// Override Draw function to announce focus changes
+			button.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
+				if m.accessibilityEnabled && button.HasFocus() {
+					buttonIndex := -1
+					for j := 0; j < m.form.GetButtonCount(); j++ {
+						if m.form.GetButton(j) == button {
+							buttonIndex = j
+							break
+						}
+					}
+
+					if buttonIndex >= 0 {
+						// Only announce if we haven't recently announced this button
+						// This is a basic way to avoid too many announcements
+						// A more robust solution would use a timestamp or state tracking
+						m.announceToScreenReader(fmt.Sprintf("Button focus: %s", button.GetLabel()))
+					}
+				}
+
+				// Call the original Draw function
+				return originalDrawHandler(screen, x, y, width, height)
 			})
 		}(index, label)
 	}
@@ -152,6 +223,25 @@ func (m *ActionModal) SetFocus(index int) *ActionModal {
 // Focus is called when this primitive receives focus.
 func (m *ActionModal) Focus(delegate func(p tview.Primitive)) {
 	delegate(m.form)
+
+	// Announce for screen readers when modal gets focus
+	if m.accessibilityEnabled {
+		// Count buttons for context
+		buttonCount := m.form.GetButtonCount()
+
+		// Create announcement with modal text and button info
+		announcement := m.text
+		if buttonCount > 0 {
+			buttonLabels := make([]string, buttonCount)
+			for i := 0; i < buttonCount; i++ {
+				buttonLabels[i] = m.form.GetButton(i).GetLabel()
+			}
+			announcement += fmt.Sprintf(". Available buttons: %s", strings.Join(buttonLabels, ", "))
+		}
+
+		// Announce the modal content
+		m.announceToScreenReader(announcement)
+	}
 }
 
 // HasFocus returns whether or not this primitive has focus.

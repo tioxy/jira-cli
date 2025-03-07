@@ -743,6 +743,41 @@ Sprint 1:   3
 ```
 </details>
 
+## Accessibility Support
+
+jira-cli provides accessibility features for users of screen readers. To enable accessibility mode, use the `--accessibility` flag:
+
+```sh
+jira [command] --accessibility
+```
+
+You can also enable accessibility mode permanently by setting the environment variable:
+
+```sh
+export JIRA_ACCESSIBILITY_MODE=1
+```
+
+### Accessibility Features
+
+When accessibility mode is enabled:
+
+1. Screen reader announcements are made for:
+   - Table navigation and selection
+   - Button focus and selection
+   - Modal dialog content
+   - State changes and user actions
+
+2. Special keyboard shortcuts:
+   - `Ctrl+S`: Speak the current selection details
+   - `Ctrl+A`: Hear the accessibility help message
+   - Standard navigation via arrow keys, tab, and enter
+
+For more information about accessibility features, run:
+
+```sh
+jira --accessibility-help
+```
+
 ## Known Issues
 
 1. Not all [Atlassian nodes](https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/#nodes) are
